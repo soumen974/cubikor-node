@@ -16,7 +16,6 @@ app.use(cors({
   optionsSuccessStatus: 200 // some legacy browsers (IE11, various SmartTVs) choke on 204
 }));
 
-
 const pool = mariadb.createPool({
   host: 'localhost',
   user: 'root',
@@ -44,7 +43,6 @@ const SECRET_KEY = 'soumen9749807435';
 app.post('/register', [
   body('email').isEmail(),
   body('password').isLength({ min: 5 }),
-  // Validate the mobile number (optional)
   body('mobile_number').optional().isMobilePhone('any')
 ], async (req, res) => {
   const errors = validationResult(req);
@@ -63,7 +61,7 @@ app.post('/register', [
       return res.status(400).json({ error: 'User already exists' });
     }
   } catch (err) {
-    return res.status(500).send(err.toString());
+    return res.status(500).send(`Error checking email: ${err.toString()}`);
   }
 
   const query = `INSERT INTO users (username, name, auth, email, password, mobile_number, date_of_birth, country, security_question, security_answer, street, city, state, zipcode, shipping_country)
@@ -75,7 +73,7 @@ app.post('/register', [
       user.auth || false,
       user.email,
       hashedPassword,
-      user.mobile_number || null, // Include mobile_number field
+      user.mobile_number || null,
       user.date_of_birth || null,
       user.country || '',
       user.security_question || '',
@@ -88,12 +86,9 @@ app.post('/register', [
     ]);
     res.status(201).json({ message: 'User created successfully', id: result.insertId.toString() });
   } catch (err) {
-    res.status(500).send(err.toString());
+    res.status(500).send(`Error creating user: ${err.toString()}`);
   }
 });
-
-
-
 
 // User login
 app.post('/login', [
@@ -113,8 +108,8 @@ app.post('/login', [
       const user = rows[0];
       const match = await bcrypt.compare(password, user.password);
       if (match) {
-        const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY, { expiresIn: '1h' });
-        res.status(200).json({ token, userId: user.id }); // Include userId in the response
+        const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY, { expiresIn: '1d' });
+        res.status(200).json({ token, userId: user.id });
       } else {
         res.status(401).json({ error: 'Invalid credentials' });
       }
@@ -122,10 +117,9 @@ app.post('/login', [
       res.status(401).json({ error: 'Invalid credentials' });
     }
   } catch (err) {
-    res.status(500).send(err.toString());
+    res.status(500).send(`Error logging in: ${err.toString()}`);
   }
 });
-
 
 // Middleware to authenticate token
 function authenticateToken(req, res, next) {
@@ -140,39 +134,27 @@ function authenticateToken(req, res, next) {
 }
 
 // Get all users
-
 app.get('/users', async (req, res) => {
   const query = `SELECT * FROM users`;
   try {
     const rows = await executeQuery(query, []);
     res.status(200).json(rows);
   } catch (err) {
-    res.status(500).send(err.toString());
+    res.status(500).send(`Error retrieving users: ${err.toString()}`);
   }
 });
+
 // Get a user by ID
 app.get('/users/:id', authenticateToken, async (req, res) => {
   const query = `SELECT * FROM users WHERE id = ?`;
   try {
     const rows = await executeQuery(query, [req.params.id]);
     if (rows.length === 0) {
-      return res.status(404).send('Could not find user with id ' + req.params.id);
+      return res.status(404).send(`Could not find user with id ${req.params.id}`);
     }
     res.status(200).json(rows[0]);
   } catch (err) {
-    res.status(500).send('Error retrieving user: ' + err.toString());
-  }
-});
-
-
-// Get a user by ID
-app.get('/users/:id', authenticateToken, async (req, res) => {
-  const query = `SELECT * FROM users WHERE id = ?`;
-  try {
-    const rows = await executeQuery(query, [req.params.id]);
-    res.status(200).json(rows[0]);
-  } catch (err) {
-    res.status(500).send('could not find user with id ' + req.params.id);
+    res.status(500).send(`Error retrieving user: ${err.toString()}`);
   }
 });
 
@@ -220,7 +202,7 @@ app.put('/users/:id', authenticateToken, async (req, res) => {
     params.push(user.security_answer);
   }
   if (user.mobile_number) {
-    updates.push('mobile_number = ?'); // Include mobile_number field
+    updates.push('mobile_number = ?');
     params.push(user.mobile_number);
   }
   if (user.shipping_address?.street) {
@@ -255,19 +237,18 @@ app.put('/users/:id', authenticateToken, async (req, res) => {
     await executeQuery(query, params);
     res.status(200).send('User updated successfully');
   } catch (err) {
-    res.status(500).send(err.toString());
+    res.status(500).send(`Error updating user: ${err.toString()}`);
   }
 });
 
-
 // Delete a user by ID
-app.delete('/users/:id',  async (req, res) => {
+app.delete('/users/:id', async (req, res) => {
   const query = `DELETE FROM users WHERE id = ?`;
   try {
     await executeQuery(query, [req.params.id]);
     res.status(200).send('User deleted successfully');
   } catch (err) {
-    res.status(500).send(err.toString());
+    res.status(500).send(`Error deleting user: ${err.toString()}`);
   }
 });
 
@@ -279,7 +260,7 @@ app.post('/users/:id/shopping_bag', authenticateToken, async (req, res) => {
     const result = await executeQuery(query, [req.params.id, item.category_id, item.product_id, item.quantity]);
     res.status(201).send({ id: result.insertId.toString() });
   } catch (err) {
-    res.status(500).send(err.toString());
+    res.status(500).send(`Error adding item to shopping bag: ${err.toString()}`);
   }
 });
 
@@ -289,7 +270,7 @@ app.get('/users/:id/shopping_bag', authenticateToken, async (req, res) => {
     const rows = await executeQuery(query, [req.params.id]);
     res.status(200).json(rows);
   } catch (err) {
-    res.status(500).send(err.toString());
+    res.status(500).send(`Error retrieving shopping bag: ${err.toString()}`);
   }
 });
 
@@ -299,12 +280,12 @@ app.delete('/users/:id/shopping_bag/:item_id', authenticateToken, async (req, re
     await executeQuery(query, [req.params.item_id, req.params.id]);
     res.status(200).send('Item removed from shopping bag');
   } catch (err) {
-    res.status(500).send(err.toString());
+    res.status(500).send(`Error removing item from shopping bag: ${err.toString()}`);
   }
 });
 
 // Start the server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server is running on port http://localhost:${PORT}`);
+  console.log(`Server is running on http://localhost:${PORT}`);
 });
