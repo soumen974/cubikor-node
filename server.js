@@ -8,12 +8,9 @@ const cors = require('cors');
 const app = express();
 
 app.use(bodyParser.json());
-app.use(cors());
-
-// Enable CORS for a specific origin
 app.use(cors({
   origin: 'http://localhost:3000',
-  optionsSuccessStatus: 200 // some legacy browsers (IE11, various SmartTVs) choke on 204
+  optionsSuccessStatus: 200
 }));
 
 const pool = mariadb.createPool({
@@ -39,6 +36,7 @@ async function executeQuery(query, params) {
 
 const SECRET_KEY = 'soumen9749807435';
 
+// User-related endpoints
 // User registration
 app.post('/register', [
   body('email').isEmail(),
@@ -52,8 +50,7 @@ app.post('/register', [
 
   const user = req.body;
   const hashedPassword = await bcrypt.hash(user.password, 10);
-  
-  // Check if the email already exists
+
   const checkQuery = 'SELECT COUNT(*) AS count FROM users WHERE email = ?';
   try {
     const checkResult = await executeQuery(checkQuery, [user.email]);
@@ -64,8 +61,8 @@ app.post('/register', [
     return res.status(500).send(`Error checking email: ${err.toString()}`);
   }
 
-  const query = `INSERT INTO users (username, name, auth, email, password, mobile_number, date_of_birth, country, security_question, security_answer, street, city, state, zipcode, shipping_country)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  const query = `INSERT INTO users (username, name, auth, email, password, mobile_number, date_of_birth, user_type ,country, security_question, security_answer, street, city, state, zipcode, shipping_country)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
   try {
     const result = await executeQuery(query, [
       user.username || '',
@@ -75,6 +72,7 @@ app.post('/register', [
       hashedPassword,
       user.mobile_number || null,
       user.date_of_birth || null,
+      user.user_type || '',
       user.country || '',
       user.security_question || '',
       user.security_answer || '',
@@ -109,7 +107,7 @@ app.post('/login', [
       const match = await bcrypt.compare(password, user.password);
       if (match) {
         const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY, { expiresIn: '1d' });
-        res.status(200).json({ token, userId: user.id });
+        res.status(200).json({ token, userId: user.id ,user_type: user.user_type});
       } else {
         res.status(401).json({ error: 'Invalid credentials' });
       }
@@ -154,7 +152,7 @@ app.get('/users/:id', authenticateToken, async (req, res) => {
     }
     res.status(200).json(rows[0]);
   } catch (err) {
-    res.status(500).send(`Error retrieving user: ${err.toString()}`);
+    res.status (500).send(`Error retrieving user: ${err.toString()}`);
   }
 });
 
@@ -237,52 +235,294 @@ app.put('/users/:id', authenticateToken, async (req, res) => {
     await executeQuery(query, params);
     res.status(200).send('User updated successfully');
   } catch (err) {
-    res.status(500).send(`Error updating user: ${err.toString()}`);
+    res.status(500).send(`Error updating user: ${err.message}`);
   }
 });
 
 // Delete a user by ID
-app.delete('/users/:id', async (req, res) => {
+app.delete('/users/:id', authenticateToken, async (req, res) => {
   const query = `DELETE FROM users WHERE id = ?`;
   try {
     await executeQuery(query, [req.params.id]);
     res.status(200).send('User deleted successfully');
   } catch (err) {
-    res.status(500).send(`Error deleting user: ${err.toString()}`);
+    res.status(500).send(`Error deleting user: ${err.message}`);
   }
 });
 
-// Shopping bag operations
-app.post('/users/:id/shopping_bag', authenticateToken, async (req, res) => {
-  const item = req.body;
-  const query = `INSERT INTO shopping_bag (user_id, category_id, product_id, quantity) VALUES (?, ?, ?, ?)`;
+// Shopping cart operations
+app.post('/users/:id/shopping_cart', authenticateToken, [
+  body('CategoryId').notEmpty().withMessage('CategoryId is required'),
+  body('productId').notEmpty().withMessage('productId is required'),
+  body('quantity').isInt({ gt: 0 }).withMessage('Quantity must be a positive integer')
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  const userId = req.params.id;
+  const { CategoryId, productId, quantity } = req.body;
+  console.log('Request body:', req.body);
+
+  const query = `INSERT INTO shopping_cart (user_id, CategoryId, productId, quantity) VALUES (?, ?, ?, ?)`;
   try {
-    const result = await executeQuery(query, [req.params.id, item.category_id, item.product_id, item.quantity]);
+    const result = await executeQuery(query, [userId, CategoryId, productId, quantity]);
     res.status(201).send({ id: result.insertId.toString() });
   } catch (err) {
-    res.status(500).send(`Error adding item to shopping bag: ${err.toString()}`);
+    res.status(500).send(`Error adding item to shopping cart: ${err.message}`);
   }
 });
 
-app.get('/users/:id/shopping_bag', authenticateToken, async (req, res) => {
-  const query = `SELECT * FROM shopping_bag WHERE user_id = ?`;
+app.get('/users/:id/shopping_cart', authenticateToken, async (req, res) => {
+  const userId = req.params.id;
+  const query = `SELECT * FROM shopping_cart WHERE user_id = ?`;
   try {
-    const rows = await executeQuery(query, [req.params.id]);
+    const rows = await executeQuery(query, [userId]);
     res.status(200).json(rows);
   } catch (err) {
-    res.status(500).send(`Error retrieving shopping bag: ${err.toString()}`);
+    res.status(500).send(`Error retrieving shopping cart: ${err.message}`);
   }
 });
 
-app.delete('/users/:id/shopping_bag/:item_id', authenticateToken, async (req, res) => {
-  const query = `DELETE FROM shopping_bag WHERE id = ? AND user_id = ?`;
+app.delete('/users/:id/shopping_cart/:item_id', authenticateToken, async (req, res) => {
+  const userId = req.params.id;
+  const itemId = req.params.item_id;
+  const query = `DELETE FROM shopping_cart WHERE id = ? AND user_id = ?`;
   try {
-    await executeQuery(query, [req.params.item_id, req.params.id]);
-    res.status(200).send('Item removed from shopping bag');
+    await executeQuery(query, [itemId, userId]);
+    res.status(200).send('Item removed from shopping cart');
   } catch (err) {
-    res.status(500).send(`Error removing item from shopping bag: ${err.toString()}`);
+    res.status(500).send(`Error removing item from shopping cart: ${err.message}`);
   }
 });
+
+// ---------PRODUCTS-------------
+
+// Create a new category
+app.post('/categories', authenticateToken, [
+  body('name').notEmpty().withMessage('Name is required')
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  const { name, href } = req.body;
+
+  const query = `INSERT INTO categories (name, href) VALUES (?, ?)`;
+  try {
+    const result = await executeQuery(query, [name, href || '#']);
+    res.status(201).json({ id: result.insertId.toString() });
+  } catch (err) {
+    res.status(500).send(`Error creating category: ${err.message}`);
+  }
+});
+
+// Get all categories with products
+app.get('/categories', async (req, res) => {
+  const categoryQuery = `SELECT * FROM categories`;
+  const productQuery = `SELECT * FROM products WHERE category_id = ?`;
+
+  try {
+    const categories = await executeQuery(categoryQuery, []);
+    for (const category of categories) {
+      const products = await executeQuery(productQuery, [category.id]);
+      category.data = products;
+    }
+    res.status(200).json(categories);
+  } catch (err) {
+    res.status(500).send(`Error retrieving categories: ${err.message}`);
+  }
+});
+
+// Get a category by ID with products
+app.get('/categories/:id', async (req, res) => {
+  const categoryQuery = `SELECT * FROM categories WHERE id = ?`;
+  const productQuery = `SELECT * FROM products WHERE category_id = ?`;
+
+  try {
+    const categoryRows = await executeQuery(categoryQuery, [req.params.id]);
+    if (categoryRows.length === 0) {
+      return res.status(404).send(`Could not find category with id ${req.params.id}`);
+    }
+    const category = categoryRows[0];
+    category.data = await executeQuery(productQuery, [category.id]);
+    res.status(200).json(category);
+  } catch (err) {
+    res.status(500).send(`Error retrieving category: ${err.message}`);
+  }
+});
+
+// Update a category by ID
+app.put('/categories/:id', authenticateToken, async (req, res) => {
+  const category = req.body;
+  const updates = [];
+  const params = [];
+
+  if (category.name) {
+    updates.push('name = ?');
+    params.push(category.name);
+  }
+  if (category.href) {
+    updates.push('href = ?');
+    params.push(category.href);
+  }
+
+  params.push(req.params.id);
+
+  if (updates.length === 0) {
+    return res.status(400).send('No valid fields to update');
+  }
+
+  const query = `UPDATE categories SET ${updates.join(', ')} WHERE id = ?`;
+  try {
+    await executeQuery(query, params);
+    res.status(200).send('Category updated successfully');
+  } catch (err) {
+    res.status(500).send(`Error updating category: ${err.message}`);
+  }
+});
+
+// Delete a category by ID
+app.delete('/categories/:id', authenticateToken, async (req, res) => {
+  const query = `DELETE FROM categories WHERE id = ?`;
+  try {
+    await executeQuery(query, [req.params.id]);
+    res.status(200).send('Category deleted successfully');
+  } catch (err) {
+    res.status(500).send(`Error deleting category: ${err.message}`);
+  }
+});
+
+// Create a new product
+app.post('/products', authenticateToken, [
+  body('name').notEmpty().withMessage('Name is required'),
+  body('price').notEmpty().withMessage('Price is required'),
+  body('categoryId').notEmpty().withMessage('CategoryId is required')
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  const { name, href, imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, categoryId } = req.body;
+
+  const query = `INSERT INTO products (name, href, imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, category_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  try {
+    const result = await executeQuery(query, [name, href || '/', imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, categoryId]);
+    res.status(201).json({ id: result.insertId.toString() });
+  } catch (err) {
+    res.status(500).send(`Error creating product: ${err.message}`);
+  }
+});
+
+// Get all products
+app.get('/products', async (req, res) => {
+  const query = `SELECT * FROM products`;
+  try {
+    const rows = await executeQuery(query, []);
+    res.status(200).json(rows);
+  } catch (err) {
+    res.status(500).send(`Error retrieving products: ${err.message}`);
+  }
+});
+
+// Get a product by ID
+app.get('/products/:id', async (req, res) => {
+  const query = `SELECT * FROM products WHERE id = ?`;
+  try {
+    const rows = await executeQuery(query, [req.params.id]);
+    if (rows.length === 0) {
+      return res.status(404).send(`Could not find product with id ${req.params.id}`);
+    }
+    res.status(200).json(rows[0]);
+  } catch (err) {
+    res.status (500).send(`Error retrieving product: ${err.message}`);
+  }
+});
+
+// Update a product by ID
+app.put('/products/:id', authenticateToken, async (req, res) => {
+  const product = req.body;
+  const updates = [];
+  const params = [];
+
+  if (product.name) {
+    updates.push('name = ?');
+    params.push(product.name);
+  }
+  if (product.href) {
+    updates.push('href = ?');
+    params.push(product.href);
+  }
+  if (product.imageSrc) {
+    updates.push('imageSrc = ?');
+    params.push(product.imageSrc);
+  }
+  if (product.imageAlt) {
+    updates.push('imageAlt = ?');
+    params.push(product.imageAlt);
+  }
+  if (product.price) {
+    updates.push('price = ?');
+    params.push(product.price);
+  }
+  if (product.color) {
+    updates.push('color = ?');
+    params.push(product.color);
+  }
+  if (product.rating) {
+    updates.push('rating = ?');
+    params.push(product.rating);
+  }
+  if (product.reviewCount) {
+    updates.push('reviewCount = ?');
+    params.push(product.reviewCount);
+  }
+  if (product.description) {
+    updates.push('description = ?');
+    params.push(product.description);
+  }
+  if (product.details) {
+    updates.push('details = ?');
+    params.push(product.details);
+  }
+  if (product.highlights) {
+    updates.push('highlights = ?');
+    params.push(product.highlights);
+  }
+  if (product.categoryId) {
+    updates.push('category_id = ?');
+    params.push(product.categoryId);
+  }
+
+  params.push(req.params.id);
+
+  if (updates.length === 0) {
+    return res.status(400).send('No valid fields to update');
+  }
+
+  const query = `UPDATE products SET ${updates.join(', ')} WHERE id = ?`;
+  try {
+    await executeQuery(query, params);
+    res.status(200).send('Product updated successfully');
+  } catch (err) {
+    res.status(500).send(`Error updating product: ${err.message}`);
+  }
+});
+
+// Delete a product by ID
+app.delete('/products/:id', authenticateToken, async (req, res) => {
+  const query = `DELETE FROM products WHERE id = ?`;
+  try {
+    await executeQuery(query, [req.params.id]);
+    res.status(200).send('Product deleted successfully');
+  } catch (err) {
+    res.status(500).send(`Error deleting product: ${err.message}`);
+  }
+});
+
 
 // Start the server
 const PORT = process.env.PORT || 5000;
