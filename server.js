@@ -7,6 +7,10 @@ const { body, validationResult } = require('express-validator');
 const cors = require('cors');
 const app = express();
 
+const multer = require('multer');
+const fs = require('fs');
+
+
 app.use(bodyParser.json());
 app.use(cors({
   origin: 'http://localhost:3000',
@@ -99,7 +103,7 @@ app.post('/login', [
   }
 
   const { email, password } = req.body;
-  const query = `SELECT * FROM users WHERE email = ?`;
+  const query = `SELECT * FROM users WHERE email = ? ` ;
   try {
     const rows = await executeQuery(query, [email]);
     if (rows.length > 0) {
@@ -297,37 +301,186 @@ app.delete('/users/:id/shopping_cart/:item_id', authenticateToken, async (req, r
   }
 });
 
-// ---------PRODUCTS-------------
+// -------Shop--PRODUCTS-------------
 
-// Create a new category
-app.post('/categories', authenticateToken, [
-  body('name').notEmpty().withMessage('Name is required')
+// Register a new shop
+app.post('/shops/register', [
+  body('email').isEmail(),
+  body('password').isLength({ min: 5 })
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
   }
 
-  const { name, href } = req.body;
+  const shopOwner = req.body;
 
-  const query = `INSERT INTO categories (name, href) VALUES (?, ?)`;
   try {
-    const result = await executeQuery(query, [name, href || '#']);
+    const hashedPassword = await bcrypt.hash(shopOwner.password, 10);
+
+    const checkQuery = 'SELECT COUNT(*) AS count FROM shops WHERE email = ?';
+    const checkResult = await executeQuery(checkQuery, [shopOwner.email]);
+    if (checkResult[0].count > 0) {
+      return res.status(400).json({ error: 'User already exists' });
+    }
+
+    const query = `INSERT INTO shops (name, email, mobile, address, password) VALUES (?, ?, ?, ?, ?)`;
+    const result = await executeQuery(query, [
+      shopOwner.name ,
+      shopOwner.email,
+      shopOwner.mobile || '',
+      shopOwner.address || '',
+      hashedPassword
+    ]);
+
+    res.status(201).json({ message: 'User created successfully', id: result.insertId.toString() });
+  } catch (err) {
+    res.status(500).send(`Error creating user: ${err.toString()}`);
+  }
+});
+
+// Login a shop
+app.post('/shops/login', [
+  body('email').isEmail(),
+  body('password').isLength({ min: 5 })
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+  const { email, password } = req.body;
+  const query = `SELECT * FROM shops WHERE email = ? ` ;
+  try {
+    const rows = await executeQuery(query, [email]);
+    if (rows.length > 0) {
+      const user = rows[0];
+      const match = await bcrypt.compare(password, user.password);
+      if (match) {
+        const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY, { expiresIn: '1d' });
+        res.status(200).json({ token, userId: user.id });
+      } else {
+        res.status(401).json({ error: 'Invalid credentials' });
+      }
+    } else {
+      res.status(401).json({ error: 'Invalid credentials' });
+    }
+  } catch (err) {
+    res.status(500).send(`Error logging in: ${err.toString()}`);
+  }
+});
+
+// all shop
+app.get('/shops',authenticateToken, async (req, res) => {
+  const query = `SELECT * FROM shops`;
+  try {
+    const shops = await executeQuery(query, []);
+    res.status(200).json(shops);
+  } catch (err) {
+    res.status(500).send(`Error retrieving shops: ${err.message}`);
+  }
+});
+
+// shop with id
+
+app.get('/shops/:id', async (req, res) => {
+  const shopId = req.params.id;
+  
+  // Query to fetch the shop by its ID
+  const query = `SELECT * FROM shops WHERE id = ?`;
+  
+  try {
+    const shopRows = await executeQuery(query, [shopId]);
+    if (shopRows.length === 0) {
+      return res.status(404).send(`Could not find shop with id ${shopId}`);
+    }
+    
+    // Return the shop details as JSON
+    const shop = shopRows[0];
+    res.status(200).json(shop);
+  } catch (err) {
+    res.status(500).send(`Error retrieving shop: ${err.message}`);
+  }
+});
+
+//  update a shop
+app.put('/shops/:id',authenticateToken, async (req, res) => {
+  const shopId = req.params.id;
+  const { name, email, mobile, address, password } = req.body;
+
+  // Check if shop exists
+  const shopQuery = `SELECT * FROM shops WHERE id = ?`;
+  try {
+    const shopRows = await executeQuery(shopQuery, [shopId]);
+    if (shopRows.length === 0) {
+      return res.status(404).send(`Could not find shop with id ${shopId}`);
+    }
+
+    // Update shop
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const updateQuery = `UPDATE shops SET name = ?, email = ?, mobile = ?, address = ?, password = ? WHERE id = ?`;
+    const params = [name, email, mobile, address, hashedPassword, shopId];
+    await executeQuery(updateQuery, params);
+
+    res.status(200).send('Shop updated successfully');
+  } catch (err) {
+    res.status(500).send(`Error updating shop: ${err.message}`);
+  }
+});
+
+// delete a shop
+
+app.delete('/shops/:id',authenticateToken, async (req, res) => {
+  const shopId = req.params.id;
+
+  // Check if shop exists
+  const shopQuery = `SELECT * FROM shops WHERE id = ?`;
+  try {
+    const shopRows = await executeQuery(shopQuery, [shopId]);
+    if (shopRows.length === 0) {
+      return res.status(404).send(`Could not find shop with id ${shopId}`);
+    }
+
+    // Delete shop
+    const deleteQuery = `DELETE FROM shops WHERE id = ?`;
+    await executeQuery(deleteQuery, [shopId]);
+
+    res.status(200).send('Shop deleted successfully');
+  } catch (err) {
+    res.status(500).send(`Error deleting shop: ${err.message}`);
+  }
+});
+
+
+// shop data entry----------------
+
+// Create a new category for a shop
+app.post('/shops/:shopId/categories', authenticateToken, async (req, res) => {
+  const shopId = req.params.shopId;
+  const { name } = req.body;
+
+  // Insert the new category into the database
+  const insertQuery = `INSERT INTO catg (name, shop_id) VALUES (?, ?)`;
+  
+  try {
+    const result = await executeQuery(insertQuery, [name, shopId]);
     res.status(201).json({ id: result.insertId.toString() });
   } catch (err) {
     res.status(500).send(`Error creating category: ${err.message}`);
   }
 });
 
-// Get all categories with products
-app.get('/categories', async (req, res) => {
-  const categoryQuery = `SELECT * FROM categories`;
-  const productQuery = `SELECT * FROM products WHERE category_id = ?`;
+
+
+// Get all categories with products for a shop
+app.get('/shops/:shopId/categories', async (req, res) => {
+  const shopId = req.params.shopId;
+  const categoryQuery = `SELECT * FROM catg WHERE shop_id = ?`;
+  const productQuery = `SELECT * FROM prd WHERE category_id = ? AND shop_id = ?`;
 
   try {
-    const categories = await executeQuery(categoryQuery, []);
+    const categories = await executeQuery(categoryQuery, [shopId]);
     for (const category of categories) {
-      const products = await executeQuery(productQuery, [category.id]);
+      const products = await executeQuery(productQuery, [category.id, shopId]);
       category.data = products;
     }
     res.status(200).json(categories);
@@ -336,26 +489,30 @@ app.get('/categories', async (req, res) => {
   }
 });
 
-// Get a category by ID with products
-app.get('/categories/:id', async (req, res) => {
-  const categoryQuery = `SELECT * FROM categories WHERE id = ?`;
-  const productQuery = `SELECT * FROM products WHERE category_id = ?`;
+// Get a category by ID with products for a shop
+app.get('/shops/:shopId/categories/:id', authenticateToken, async (req, res) => {
+  const shopId = req.params.shopId;
+  const categoryId = req.params.id;
+  const categoryQuery = `SELECT * FROM catg WHERE id = ? AND shop_id = ?`;
+  const productQuery = `SELECT * FROM prd WHERE category_id = ? AND shop_id = ?`;
 
   try {
-    const categoryRows = await executeQuery(categoryQuery, [req.params.id]);
+    const categoryRows = await executeQuery(categoryQuery, [categoryId, shopId]);
     if (categoryRows.length === 0) {
-      return res.status(404).send(`Could not find category with id ${req.params.id}`);
+      return res.status(404).send(`Could not find category with id ${categoryId}`);
     }
     const category = categoryRows[0];
-    category.data = await executeQuery(productQuery, [category.id]);
+    category.data = await executeQuery(productQuery, [category.id, shopId]);
     res.status(200).json(category);
   } catch (err) {
     res.status(500).send(`Error retrieving category: ${err.message}`);
   }
 });
 
-// Update a category by ID
-app.put('/categories/:id', authenticateToken, async (req, res) => {
+// Update a category by ID for a shop
+app.put('/shops/:shopId/categories/:id', authenticateToken, async (req, res) => {
+  const shopId = req.params.shopId;
+  const categoryId = req.params.id;
   const category = req.body;
   const updates = [];
   const params = [];
@@ -369,13 +526,14 @@ app.put('/categories/:id', authenticateToken, async (req, res) => {
     params.push(category.href);
   }
 
-  params.push(req.params.id);
+  params.push(categoryId);
+  params.push(shopId);
 
   if (updates.length === 0) {
     return res.status(400).send('No valid fields to update');
   }
 
-  const query = `UPDATE categories SET ${updates.join(', ')} WHERE id = ?`;
+  const query = `UPDATE catg SET ${updates.join(', ')} WHERE id = ? AND shop_id = ?`;
   try {
     await executeQuery(query, params);
     res.status(200).send('Category updated successfully');
@@ -384,23 +542,26 @@ app.put('/categories/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Delete a category by ID
-app.delete('/categories/:id', authenticateToken, async (req, res) => {
-  const query = `DELETE FROM categories WHERE id = ?`;
+// Delete a category by ID for a shop
+app.delete('/shops/:shopId/categories/:id', authenticateToken, async (req, res) => {
+  const shopId = req.params.shopId;
+  const categoryId = req.params.id;
+  const query = `DELETE FROM catg WHERE id = ? AND shop_id = ?`;
   try {
-    await executeQuery(query, [req.params.id]);
+    await executeQuery(query, [categoryId, shopId]);
     res.status(200).send('Category deleted successfully');
   } catch (err) {
     res.status(500).send(`Error deleting category: ${err.message}`);
   }
 });
 
-// Create a new product
-app.post('/products', authenticateToken, [
+// Create a new product for a shop
+app.post('/shops/:shopId/products',  [
   body('name').notEmpty().withMessage('Name is required'),
   body('price').notEmpty().withMessage('Price is required'),
   body('categoryId').notEmpty().withMessage('CategoryId is required')
-], async (req, res) => {
+],authenticateToken, async (req, res) => {
+  const shopId = req.params.shopId;
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
@@ -408,42 +569,45 @@ app.post('/products', authenticateToken, [
 
   const { name, href, imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, categoryId } = req.body;
 
-  const query = `INSERT INTO products (name, href, imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, category_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  const query = `INSERT INTO prd (name, href, imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, category_id, shop_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
   try {
-    const result = await executeQuery(query, [name, href || '/', imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, categoryId]);
+    const result = await executeQuery(query, [name, href || '/', imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, categoryId, shopId]);
     res.status(201).json({ id: result.insertId.toString() });
   } catch (err) {
     res.status(500).send(`Error creating product: ${err.message}`);
   }
 });
 
-// Get all products
-app.get('/products', async (req, res) => {
-  const query = `SELECT * FROM products`;
+// Get all products for a shop
+app.get('/shops/:shopId/products', authenticateToken, async (req, res) => {
+  const shopId = req.params.shopId;
+  const query = `SELECT * FROM prd WHERE shop_id = ?`;
   try {
-    const rows = await executeQuery(query, []);
+    const rows = await executeQuery(query, [shopId]);
     res.status(200).json(rows);
   } catch (err) {
     res.status(500).send(`Error retrieving products: ${err.message}`);
   }
 });
 
-// Get a product by ID
-app.get('/products/:id', async (req, res) => {
-  const query = `SELECT * FROM products WHERE id = ?`;
+// Get a product by ID for a shop
+app.get('/shops/:shopId/products/:id', authenticateToken, async (req, res) => {
+  const shopId = req.params.shopId;
+  const productId = req.params.id;
+  const query = `SELECT * FROM prd WHERE id = ? AND shop_id = ?`;
   try {
-    const rows = await executeQuery(query, [req.params.id]);
-    if (rows.length === 0) {
-      return res.status(404).send(`Could not find product with id ${req.params.id}`);
-    }
+    const rows = await executeQuery(query, [productId, shopId]);
+    if (rows.length === 0) return res.status(404).send(`Could not find product with id ${productId}`);
     res.status(200).json(rows[0]);
   } catch (err) {
-    res.status (500).send(`Error retrieving product: ${err.message}`);
+    res.status(500).send(`Error retrieving product: ${err.message}`);
   }
 });
 
-// Update a product by ID
-app.put('/products/:id', authenticateToken, async (req, res) => {
+// Update a product by ID for a shop
+app.put('/shops/:shopId/products/:id', authenticateToken, async (req, res) => {
+  const shopId = req.params.shopId;
+  const productId = req.params.id;
   const product = req.body;
   const updates = [];
   const params = [];
@@ -497,13 +661,14 @@ app.put('/products/:id', authenticateToken, async (req, res) => {
     params.push(product.categoryId);
   }
 
-  params.push(req.params.id);
+  params.push(productId);
+  params.push(shopId);
 
   if (updates.length === 0) {
     return res.status(400).send('No valid fields to update');
   }
 
-  const query = `UPDATE products SET ${updates.join(', ')} WHERE id = ?`;
+  const query = `UPDATE prd SET ${updates.join(', ')} WHERE id = ? AND shop_id = ?`;
   try {
     await executeQuery(query, params);
     res.status(200).send('Product updated successfully');
@@ -512,16 +677,90 @@ app.put('/products/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Delete a product by ID
-app.delete('/products/:id', authenticateToken, async (req, res) => {
-  const query = `DELETE FROM products WHERE id = ?`;
+// Delete a product by ID for a shop
+app.delete('/shops/:shopId/products/:id', authenticateToken, async (req, res) => {
+  const shopId = req.params.shopId;
+  const productId = req.params.id;
+  const query = `DELETE FROM prd WHERE id = ? AND shop_id = ?`;
   try {
-    await executeQuery(query, [req.params.id]);
+    await executeQuery(query, [productId, shopId]);
     res.status(200).send('Product deleted successfully');
   } catch (err) {
     res.status(500).send(`Error deleting product: ${err.message}`);
   }
 });
+
+// ------image-uploder
+
+const upload = multer({ dest: 'uploads/' });
+
+app.post('/upload', upload.single('image'), async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    const fileContent = fs.readFileSync(req.file.path);
+    await conn.query("INSERT INTO images (data) VALUES (?)", [fileContent]);
+    fs.unlinkSync(req.file.path); // delete the file after uploading to database
+    res.status(200).send('Image uploaded and stored in database successfully.');
+  } catch (err) {
+    console.log(err);
+    res.status(500).send(`Server error: ${err.message}`);
+  }
+});
+
+
+app.get('/images', async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    const [results] = await conn.query("SELECT * FROM images");
+    res.status(200).json(results);
+  } catch (err) {
+    console.log(err);
+    res.status(500).send(`Server error: ${err.message}`);
+  }
+});
+
+
+app.get('/images/:id', async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    const [results] = await conn.query("SELECT * FROM images WHERE id = ?", [req.params.id]);
+    if (results.length === 0) {
+      return res.status(404).send('Image not found');
+    }
+    res.status(200).json(results[0]);
+  } catch (err) {
+    console.log(err);
+    res.status(500).send(`Server error: ${err.message}`);
+  }
+});
+
+
+app.put('/images/:id', upload.single('image'), async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    const fileContent = fs.readFileSync(req.file.path);
+    await conn.query("UPDATE images SET data = ? WHERE id = ?", [fileContent, req.params.id]);
+    fs.unlinkSync(req.file.path); // delete the file after uploading to database
+    res.status(200).send('Image updated successfully.');
+  } catch (err) {
+    console.log(err);
+    res.status(500).send(`Server error: ${err.message}`);
+  }
+});
+
+
+app.delete('/images/:id', async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    await conn.query("DELETE FROM images WHERE id = ?", [req.params.id]);
+    res.status(200).send('Image deleted successfully.');
+  } catch (err) {
+    console.log(err);
+    res.status(500).send(`Server error: ${err.message}`);
+  }
+});
+
+
 
 
 // Start the server
