@@ -7,6 +7,10 @@ const { body, validationResult } = require('express-validator');
 const cors = require('cors');
 const app = express();
 
+const multer = require('multer');
+const fs = require('fs');
+
+
 app.use(bodyParser.json());
 app.use(cors({
   origin: 'http://localhost:3000',
@@ -300,34 +304,68 @@ app.delete('/users/:id/shopping_cart/:item_id', authenticateToken, async (req, r
 // -------Shop--PRODUCTS-------------
 
 // Register a new shop
-app.post('/shops/register', async (req, res) => {
-  const { name, email, mobile, address, password } = req.body;
-  const hashedPassword = await bcrypt.hash(password, 10);
-  const query = `INSERT INTO shops (name, email, mobile, address, password) VALUES (?, ?, ?, ?, ?)`;
+app.post('/shops/register', [
+  body('email').isEmail(),
+  body('password').isLength({ min: 5 })
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  const shopOwner = req.body;
+
   try {
-    const result = await executeQuery(query, [name, email, mobile, address, hashedPassword]);
-    res.status(201).json({ id: result.insertId.toString() });
+    const hashedPassword = await bcrypt.hash(shopOwner.password, 10);
+
+    const checkQuery = 'SELECT COUNT(*) AS count FROM shops WHERE email = ?';
+    const checkResult = await executeQuery(checkQuery, [shopOwner.email]);
+    if (checkResult[0].count > 0) {
+      return res.status(400).json({ error: 'User already exists' });
+    }
+
+    const query = `INSERT INTO shops (name, email, mobile, address, password) VALUES (?, ?, ?, ?, ?)`;
+    const result = await executeQuery(query, [
+      shopOwner.name ,
+      shopOwner.email,
+      shopOwner.mobile || '',
+      shopOwner.address || '',
+      hashedPassword
+    ]);
+
+    res.status(201).json({ message: 'User created successfully', id: result.insertId.toString() });
   } catch (err) {
-    res.status(500).send(`Error creating shop: ${err.message}`);
+    res.status(500).send(`Error creating user: ${err.toString()}`);
   }
 });
 
 // Login a shop
-app.post('/shops/login', async (req, res) => {
+app.post('/shops/login', [
+  body('email').isEmail(),
+  body('password').isLength({ min: 5 })
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
   const { email, password } = req.body;
-  const query = `SELECT * FROM shops WHERE email = ?`;
+  const query = `SELECT * FROM shops WHERE email = ? ` ;
   try {
     const rows = await executeQuery(query, [email]);
-    if (rows.length === 0) return res.status(404).send('Shop not found');
-
-    const shop = rows[0];
-    const validPassword = await bcrypt.compare(password, shop.password);
-    if (!validPassword) return res.status(400).send('Invalid password');
-
-    const token = jwt.sign({ id: shop.id }, SECRET_KEY, { expiresIn: '1h' });
-    res.status(200).json({ token });
+    if (rows.length > 0) {
+      const user = rows[0];
+      const match = await bcrypt.compare(password, user.password);
+      if (match) {
+        const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY, { expiresIn: '1d' });
+        res.status(200).json({ token, userId: user.id });
+      } else {
+        res.status(401).json({ error: 'Invalid credentials' });
+      }
+    } else {
+      res.status(401).json({ error: 'Invalid credentials' });
+    }
   } catch (err) {
-    res.status(500).send(`Error logging in: ${err.message}`);
+    res.status(500).send(`Error logging in: ${err.toString()}`);
   }
 });
 
@@ -434,7 +472,7 @@ app.post('/shops/:shopId/categories', authenticateToken, async (req, res) => {
 
 
 // Get all categories with products for a shop
-app.get('/shops/:shopId/categories', authenticateToken, async (req, res) => {
+app.get('/shops/:shopId/categories', async (req, res) => {
   const shopId = req.params.shopId;
   const categoryQuery = `SELECT * FROM catg WHERE shop_id = ?`;
   const productQuery = `SELECT * FROM prd WHERE category_id = ? AND shop_id = ?`;
@@ -651,6 +689,77 @@ app.delete('/shops/:shopId/products/:id', authenticateToken, async (req, res) =>
     res.status(500).send(`Error deleting product: ${err.message}`);
   }
 });
+
+// ------image-uploder
+
+const upload = multer({ dest: 'uploads/' });
+
+app.post('/upload', upload.single('image'), async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    const fileContent = fs.readFileSync(req.file.path);
+    await conn.query("INSERT INTO images (data) VALUES (?)", [fileContent]);
+    fs.unlinkSync(req.file.path); // delete the file after uploading to database
+    res.status(200).send('Image uploaded and stored in database successfully.');
+  } catch (err) {
+    console.log(err);
+    res.status(500).send(`Server error: ${err.message}`);
+  }
+});
+
+
+app.get('/images', async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    const [results] = await conn.query("SELECT * FROM images");
+    res.status(200).json(results);
+  } catch (err) {
+    console.log(err);
+    res.status(500).send(`Server error: ${err.message}`);
+  }
+});
+
+
+app.get('/images/:id', async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    const [results] = await conn.query("SELECT * FROM images WHERE id = ?", [req.params.id]);
+    if (results.length === 0) {
+      return res.status(404).send('Image not found');
+    }
+    res.status(200).json(results[0]);
+  } catch (err) {
+    console.log(err);
+    res.status(500).send(`Server error: ${err.message}`);
+  }
+});
+
+
+app.put('/images/:id', upload.single('image'), async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    const fileContent = fs.readFileSync(req.file.path);
+    await conn.query("UPDATE images SET data = ? WHERE id = ?", [fileContent, req.params.id]);
+    fs.unlinkSync(req.file.path); // delete the file after uploading to database
+    res.status(200).send('Image updated successfully.');
+  } catch (err) {
+    console.log(err);
+    res.status(500).send(`Server error: ${err.message}`);
+  }
+});
+
+
+app.delete('/images/:id', async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    await conn.query("DELETE FROM images WHERE id = ?", [req.params.id]);
+    res.status(200).send('Image deleted successfully.');
+  } catch (err) {
+    console.log(err);
+    res.status(500).send(`Server error: ${err.message}`);
+  }
+});
+
 
 
 
