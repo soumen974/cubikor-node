@@ -556,11 +556,11 @@ app.delete('/shops/:shopId/categories/:id', authenticateToken, async (req, res) 
 });
 
 // Create a new product for a shop
-app.post('/shops/:shopId/products',  [
+app.post('/shops/:shopId/products', [
   body('name').notEmpty().withMessage('Name is required'),
   body('price').notEmpty().withMessage('Price is required'),
   body('categoryId').notEmpty().withMessage('CategoryId is required')
-],authenticateToken, async (req, res) => {
+], authenticateToken, async (req, res) => {
   const shopId = req.params.shopId;
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -569,11 +569,26 @@ app.post('/shops/:shopId/products',  [
 
   const { name, href, imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, categoryId } = req.body;
 
+
   const query = `INSERT INTO prd (name, href, imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, category_id, shop_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
   try {
+    // Ensure categoryId and shopId exist before insertion
+    const categoryCheckQuery = 'SELECT id FROM catg WHERE id = ?';
+    const categoryCheck = await executeQuery(categoryCheckQuery, [categoryId]);
+    if (categoryCheck.length === 0) {
+      return res.status(400).json({ error: 'Invalid categoryId' });
+    }
+
+    const shopCheckQuery = 'SELECT id FROM shops WHERE id = ?';
+    const shopCheck = await executeQuery(shopCheckQuery, [shopId]);
+    if (shopCheck.length === 0) {
+      return res.status(400).json({ error: 'Invalid shopId' });
+    }
+
     const result = await executeQuery(query, [name, href || '/', imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, categoryId, shopId]);
     res.status(201).json({ id: result.insertId.toString() });
   } catch (err) {
+    console.error('Error creating product:', err);
     res.status(500).send(`Error creating product: ${err.message}`);
   }
 });
@@ -591,7 +606,7 @@ app.get('/shops/:shopId/products', authenticateToken, async (req, res) => {
 });
 
 // Get a product by ID for a shop
-app.get('/shops/:shopId/products/:id', authenticateToken, async (req, res) => {
+app.get('/shops/:shopId/products/:id', async (req, res) => {
   const shopId = req.params.shopId;
   const productId = req.params.id;
   const query = `SELECT * FROM prd WHERE id = ? AND shop_id = ?`;
@@ -689,6 +704,19 @@ app.delete('/shops/:shopId/products/:id', authenticateToken, async (req, res) =>
     res.status(500).send(`Error deleting product: ${err.message}`);
   }
 });
+
+// fetch products from all shops.
+app.get('/products/all', authenticateToken, async (req, res) => {
+  const query = `SELECT * FROM prd`;
+  try {
+    const rows = await executeQuery(query);
+    res.status(200).json(rows);
+  } catch (err) {
+    res.status(500).send(`Error retrieving products: ${err.message}`);
+  }
+});
+
+
 
 // ------image-uploder
 
