@@ -255,10 +255,12 @@ app.delete('/users/:id', authenticateToken, async (req, res) => {
 });
 
 // Shopping cart operations
+
 app.post('/users/:id/shopping_cart', authenticateToken, [
   body('CategoryId').notEmpty().withMessage('CategoryId is required'),
   body('productId').notEmpty().withMessage('productId is required'),
-  body('quantity').isInt({ gt: 0 }).withMessage('Quantity must be a positive integer')
+  body('quantity').isInt({ gt: 0 }).withMessage('Quantity must be a positive integer'),
+  body('shopId').notEmpty().withMessage('shopId is required')
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -266,12 +268,12 @@ app.post('/users/:id/shopping_cart', authenticateToken, [
   }
 
   const userId = req.params.id;
-  const { CategoryId, productId, quantity } = req.body;
+  const { CategoryId, productId, quantity, shopId } = req.body;
   console.log('Request body:', req.body);
 
-  const query = `INSERT INTO shopping_cart (user_id, CategoryId, productId, quantity) VALUES (?, ?, ?, ?)`;
+  const query = `INSERT INTO shopping_cart (user_id, CategoryId, productId, quantity, shopId) VALUES (?, ?, ?, ?, ?)`;
   try {
-    const result = await executeQuery(query, [userId, CategoryId, productId, quantity]);
+    const result = await executeQuery(query, [userId, CategoryId, productId, quantity, shopId]);
     res.status(201).send({ id: result.insertId.toString() });
   } catch (err) {
     res.status(500).send(`Error adding item to shopping cart: ${err.message}`);
@@ -289,6 +291,33 @@ app.get('/users/:id/shopping_cart', authenticateToken, async (req, res) => {
   }
 });
 
+app.put('/users/:id/shopping_cart/:productId', authenticateToken, [
+  body('CategoryId').notEmpty().withMessage('CategoryId is required'),
+  body('quantity').isInt({ gt: 0 }).withMessage('Quantity must be a positive integer'),
+  body('shopId').notEmpty().withMessage('shopId is required')
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  const userId = req.params.id;
+  const productId = req.params.productId;
+  const { CategoryId, quantity, shopId } = req.body;
+  console.log('Request body:', req.body);
+
+  const query = `UPDATE shopping_cart SET CategoryId = ?, quantity = ?, shopId = ? WHERE user_id = ? AND productId = ?`;
+  try {
+    const result = await executeQuery(query, [CategoryId, quantity, shopId, userId, productId]);
+    if (result.affectedRows === 0) {
+      return res.status(404).send('Item not found in shopping cart');
+    }
+    res.status(200).send('Item updated successfully');
+  } catch (err) {
+    res.status(500).send(`Error updating item in shopping cart: ${err.message}`);
+  }
+});
+
 app.delete('/users/:id/shopping_cart/:item_id', authenticateToken, async (req, res) => {
   const userId = req.params.id;
   const itemId = req.params.item_id;
@@ -300,7 +329,6 @@ app.delete('/users/:id/shopping_cart/:item_id', authenticateToken, async (req, r
     res.status(500).send(`Error removing item from shopping cart: ${err.message}`);
   }
 });
-
 // -------Shop--PRODUCTS-------------
 
 // Register a new shop
