@@ -269,7 +269,6 @@ app.post('/users/:id/shopping_cart', authenticateToken, [
 
   const userId = req.params.id;
   const { CategoryId, productId, quantity, shopId } = req.body;
-  console.log('Request body:', req.body);
 
   const query = `INSERT INTO shopping_cart (user_id, CategoryId, productId, quantity, shopId) VALUES (?, ?, ?, ?, ?)`;
   try {
@@ -304,7 +303,6 @@ app.put('/users/:id/shopping_cart/:productId', authenticateToken, [
   const userId = req.params.id;
   const productId = req.params.productId;
   const { CategoryId, quantity, shopId } = req.body;
-  console.log('Request body:', req.body);
 
   const query = `UPDATE shopping_cart SET CategoryId = ?, quantity = ?, shopId = ? WHERE user_id = ? AND productId = ?`;
   try {
@@ -647,6 +645,21 @@ app.get('/shops/:shopId/products/:id', async (req, res) => {
   }
 });
 
+// Get product details by product ID
+app.get('/products/:id', authenticateToken, async (req, res) => {
+  const productId = req.params.id;
+  const query = `SELECT * FROM prd WHERE id = ?`;
+  try {
+    const rows = await executeQuery(query, [productId]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+    res.status(200).json(rows[0]);
+  } catch (err) {
+    res.status(500).send(`Error retrieving product: ${err.message}`);
+  }
+});
+
 // Update a product by ID for a shop
 app.put('/shops/:shopId/products/:id', authenticateToken, async (req, res) => {
   const shopId = req.params.shopId;
@@ -758,7 +771,7 @@ app.post('/upload', upload.single('image'), async (req, res) => {
     fs.unlinkSync(req.file.path); // delete the file after uploading to database
     res.status(200).send('Image uploaded and stored in database successfully.');
   } catch (err) {
-    console.log(err);
+    
     res.status(500).send(`Server error: ${err.message}`);
   }
 });
@@ -770,7 +783,7 @@ app.get('/images', async (req, res) => {
     const [results] = await conn.query("SELECT * FROM images");
     res.status(200).json(results);
   } catch (err) {
-    console.log(err);
+    
     res.status(500).send(`Server error: ${err.message}`);
   }
 });
@@ -785,7 +798,6 @@ app.get('/images/:id', async (req, res) => {
     }
     res.status(200).json(results[0]);
   } catch (err) {
-    console.log(err);
     res.status(500).send(`Server error: ${err.message}`);
   }
 });
@@ -799,7 +811,6 @@ app.put('/images/:id', upload.single('image'), async (req, res) => {
     fs.unlinkSync(req.file.path); // delete the file after uploading to database
     res.status(200).send('Image updated successfully.');
   } catch (err) {
-    console.log(err);
     res.status(500).send(`Server error: ${err.message}`);
   }
 });
@@ -811,7 +822,6 @@ app.delete('/images/:id', async (req, res) => {
     await conn.query("DELETE FROM images WHERE id = ?", [req.params.id]);
     res.status(200).send('Image deleted successfully.');
   } catch (err) {
-    console.log(err);
     res.status(500).send(`Server error: ${err.message}`);
   }
 });
