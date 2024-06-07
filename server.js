@@ -13,7 +13,7 @@ const fs = require('fs');
 
 app.use(bodyParser.json());
 app.use(cors({
-  origin: 'http://localhost:3000',
+  origin: 'http://localhost:3000 ',
   optionsSuccessStatus: 200
 }));
 
@@ -270,14 +270,23 @@ app.post('/users/:id/shopping_cart', authenticateToken, [
   const userId = req.params.id;
   const { CategoryId, productId, quantity, shopId } = req.body;
 
-  const query = `INSERT INTO shopping_cart (user_id, CategoryId, productId, quantity, shopId) VALUES (?, ?, ?, ?, ?)`;
+  // Check if the product is already in the cart
+  const checkQuery = `SELECT * FROM shopping_cart WHERE user_id = ? AND productId = ?`;
   try {
+    const existingItem = await executeQuery(checkQuery, [userId, productId]);
+    if (existingItem.length > 0) {
+      return res.status(400).json({ message: 'This product is already in the cart' });
+    }
+
+    // Insert the new item into the cart
+    const query = `INSERT INTO shopping_cart (user_id, CategoryId, productId, quantity, shopId) VALUES (?, ?, ?, ?, ?)`;
     const result = await executeQuery(query, [userId, CategoryId, productId, quantity, shopId]);
     res.status(201).send({ id: result.insertId.toString() });
   } catch (err) {
     res.status(500).send(`Error adding item to shopping cart: ${err.message}`);
   }
 });
+
 
 app.get('/users/:id/shopping_cart', authenticateToken, async (req, res) => {
   const userId = req.params.id;
@@ -382,7 +391,7 @@ app.post('/shops/login', [
       const user = rows[0];
       const match = await bcrypt.compare(password, user.password);
       if (match) {
-        const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY, { expiresIn: '1d' });
+        const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY, { expiresIn: '7d' });
         res.status(200).json({ token, userId: user.id });
       } else {
         res.status(401).json({ error: 'Invalid credentials' });
@@ -748,14 +757,16 @@ app.delete('/shops/:shopId/products/:id', authenticateToken, async (req, res) =>
 
 // fetch products from all shops.
 app.get('/products/all', authenticateToken, async (req, res) => {
-  const query = `SELECT * FROM prd`;
+  const query = 'SELECT * FROM prd';
   try {
     const rows = await executeQuery(query);
     res.status(200).json(rows);
   } catch (err) {
-    res.status(500).send(`Error retrieving products: ${err.message}`);
+    console.error('Error retrieving products:', err);
+    res.status(500).json({ error: 'Error retrieving products', message: err.message });
   }
 });
+
 
 
 
