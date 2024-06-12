@@ -13,7 +13,7 @@ const fs = require('fs');
 
 app.use(bodyParser.json());
 app.use(cors({
-  origin: 'http://localhost:3000',
+  origin: 'http://localhost:3000 ',
   optionsSuccessStatus: 200
 }));
 
@@ -255,10 +255,12 @@ app.delete('/users/:id', authenticateToken, async (req, res) => {
 });
 
 // Shopping cart operations
+
 app.post('/users/:id/shopping_cart', authenticateToken, [
   body('CategoryId').notEmpty().withMessage('CategoryId is required'),
   body('productId').notEmpty().withMessage('productId is required'),
-  body('quantity').isInt({ gt: 0 }).withMessage('Quantity must be a positive integer')
+  body('quantity').isInt({ gt: 0 }).withMessage('Quantity must be a positive integer'),
+  body('shopId').notEmpty().withMessage('shopId is required')
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -266,17 +268,25 @@ app.post('/users/:id/shopping_cart', authenticateToken, [
   }
 
   const userId = req.params.id;
-  const { CategoryId, productId, quantity } = req.body;
-  console.log('Request body:', req.body);
+  const { CategoryId, productId, quantity, shopId } = req.body;
 
-  const query = `INSERT INTO shopping_cart (user_id, CategoryId, productId, quantity) VALUES (?, ?, ?, ?)`;
+  // Check if the product is already in the cart
+  const checkQuery = `SELECT * FROM shopping_cart WHERE user_id = ? AND productId = ?`;
   try {
-    const result = await executeQuery(query, [userId, CategoryId, productId, quantity]);
+    const existingItem = await executeQuery(checkQuery, [userId, productId]);
+    if (existingItem.length > 0) {
+      return res.status(400).json({ message: 'This product is already in the cart' });
+    }
+
+    // Insert the new item into the cart
+    const query = `INSERT INTO shopping_cart (user_id, CategoryId, productId, quantity, shopId) VALUES (?, ?, ?, ?, ?)`;
+    const result = await executeQuery(query, [userId, CategoryId, productId, quantity, shopId]);
     res.status(201).send({ id: result.insertId.toString() });
   } catch (err) {
     res.status(500).send(`Error adding item to shopping cart: ${err.message}`);
   }
 });
+
 
 app.get('/users/:id/shopping_cart', authenticateToken, async (req, res) => {
   const userId = req.params.id;
@@ -286,6 +296,32 @@ app.get('/users/:id/shopping_cart', authenticateToken, async (req, res) => {
     res.status(200).json(rows);
   } catch (err) {
     res.status(500).send(`Error retrieving shopping cart: ${err.message}`);
+  }
+});
+
+app.put('/users/:id/shopping_cart/:productId', authenticateToken, [
+  body('CategoryId').notEmpty().withMessage('CategoryId is required'),
+  body('quantity').isInt({ gt: 0 }).withMessage('Quantity must be a positive integer'),
+  body('shopId').notEmpty().withMessage('shopId is required')
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  const userId = req.params.id;
+  const productId = req.params.productId;
+  const { CategoryId, quantity, shopId } = req.body;
+
+  const query = `UPDATE shopping_cart SET CategoryId = ?, quantity = ?, shopId = ? WHERE user_id = ? AND productId = ?`;
+  try {
+    const result = await executeQuery(query, [CategoryId, quantity, shopId, userId, productId]);
+    if (result.affectedRows === 0) {
+      return res.status(404).send('Item not found in shopping cart');
+    }
+    res.status(200).send('Item updated successfully');
+  } catch (err) {
+    res.status(500).send(`Error updating item in shopping cart: ${err.message}`);
   }
 });
 
@@ -300,7 +336,6 @@ app.delete('/users/:id/shopping_cart/:item_id', authenticateToken, async (req, r
     res.status(500).send(`Error removing item from shopping cart: ${err.message}`);
   }
 });
-
 // -------Shop--PRODUCTS-------------
 
 // Register a new shop
@@ -356,7 +391,7 @@ app.post('/shops/login', [
       const user = rows[0];
       const match = await bcrypt.compare(password, user.password);
       if (match) {
-        const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY, { expiresIn: '1d' });
+        const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY, { expiresIn: '7d' });
         res.status(200).json({ token, userId: user.id });
       } else {
         res.status(401).json({ error: 'Invalid credentials' });
@@ -556,11 +591,11 @@ app.delete('/shops/:shopId/categories/:id', authenticateToken, async (req, res) 
 });
 
 // Create a new product for a shop
-app.post('/shops/:shopId/products',  [
+app.post('/shops/:shopId/products', [
   body('name').notEmpty().withMessage('Name is required'),
   body('price').notEmpty().withMessage('Price is required'),
   body('categoryId').notEmpty().withMessage('CategoryId is required')
-],authenticateToken, async (req, res) => {
+], authenticateToken, async (req, res) => {
   const shopId = req.params.shopId;
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -569,11 +604,26 @@ app.post('/shops/:shopId/products',  [
 
   const { name, href, imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, categoryId } = req.body;
 
+
   const query = `INSERT INTO prd (name, href, imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, category_id, shop_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
   try {
+    // Ensure categoryId and shopId exist before insertion
+    const categoryCheckQuery = 'SELECT id FROM catg WHERE id = ?';
+    const categoryCheck = await executeQuery(categoryCheckQuery, [categoryId]);
+    if (categoryCheck.length === 0) {
+      return res.status(400).json({ error: 'Invalid categoryId' });
+    }
+
+    const shopCheckQuery = 'SELECT id FROM shops WHERE id = ?';
+    const shopCheck = await executeQuery(shopCheckQuery, [shopId]);
+    if (shopCheck.length === 0) {
+      return res.status(400).json({ error: 'Invalid shopId' });
+    }
+
     const result = await executeQuery(query, [name, href || '/', imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, categoryId, shopId]);
     res.status(201).json({ id: result.insertId.toString() });
   } catch (err) {
+    console.error('Error creating product:', err);
     res.status(500).send(`Error creating product: ${err.message}`);
   }
 });
@@ -591,13 +641,28 @@ app.get('/shops/:shopId/products', authenticateToken, async (req, res) => {
 });
 
 // Get a product by ID for a shop
-app.get('/shops/:shopId/products/:id', authenticateToken, async (req, res) => {
+app.get('/shops/:shopId/products/:id', async (req, res) => {
   const shopId = req.params.shopId;
   const productId = req.params.id;
   const query = `SELECT * FROM prd WHERE id = ? AND shop_id = ?`;
   try {
     const rows = await executeQuery(query, [productId, shopId]);
     if (rows.length === 0) return res.status(404).send(`Could not find product with id ${productId}`);
+    res.status(200).json(rows[0]);
+  } catch (err) {
+    res.status(500).send(`Error retrieving product: ${err.message}`);
+  }
+});
+
+// Get product details by product ID
+app.get('/products/:id', authenticateToken, async (req, res) => {
+  const productId = req.params.id;
+  const query = `SELECT * FROM prd WHERE id = ?`;
+  try {
+    const rows = await executeQuery(query, [productId]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
     res.status(200).json(rows[0]);
   } catch (err) {
     res.status(500).send(`Error retrieving product: ${err.message}`);
@@ -690,6 +755,21 @@ app.delete('/shops/:shopId/products/:id', authenticateToken, async (req, res) =>
   }
 });
 
+// fetch products from all shops.
+app.get('/products/all', authenticateToken, async (req, res) => {
+  const query = 'SELECT * FROM prd';
+  try {
+    const rows = await executeQuery(query);
+    res.status(200).json(rows);
+  } catch (err) {
+    console.error('Error retrieving products:', err);
+    res.status(500).json({ error: 'Error retrieving products', message: err.message });
+  }
+});
+
+
+
+
 // ------image-uploder
 
 const upload = multer({ dest: 'uploads/' });
@@ -702,7 +782,7 @@ app.post('/upload', upload.single('image'), async (req, res) => {
     fs.unlinkSync(req.file.path); // delete the file after uploading to database
     res.status(200).send('Image uploaded and stored in database successfully.');
   } catch (err) {
-    console.log(err);
+    
     res.status(500).send(`Server error: ${err.message}`);
   }
 });
@@ -714,7 +794,7 @@ app.get('/images', async (req, res) => {
     const [results] = await conn.query("SELECT * FROM images");
     res.status(200).json(results);
   } catch (err) {
-    console.log(err);
+    
     res.status(500).send(`Server error: ${err.message}`);
   }
 });
@@ -729,7 +809,6 @@ app.get('/images/:id', async (req, res) => {
     }
     res.status(200).json(results[0]);
   } catch (err) {
-    console.log(err);
     res.status(500).send(`Server error: ${err.message}`);
   }
 });
@@ -743,7 +822,6 @@ app.put('/images/:id', upload.single('image'), async (req, res) => {
     fs.unlinkSync(req.file.path); // delete the file after uploading to database
     res.status(200).send('Image updated successfully.');
   } catch (err) {
-    console.log(err);
     res.status(500).send(`Server error: ${err.message}`);
   }
 });
@@ -755,7 +833,6 @@ app.delete('/images/:id', async (req, res) => {
     await conn.query("DELETE FROM images WHERE id = ?", [req.params.id]);
     res.status(200).send('Image deleted successfully.');
   } catch (err) {
-    console.log(err);
     res.status(500).send(`Server error: ${err.message}`);
   }
 });

@@ -405,7 +405,7 @@ app.post('/shops/login', [
 });
 
 // all shop
-app.get('/shops',authenticateToken, async (req, res) => {
+app.get('/shops', async (req, res) => {
   const query = `SELECT * FROM shops`;
   try {
     const shops = await executeQuery(query, []);
@@ -629,7 +629,7 @@ app.post('/shops/:shopId/products', [
 });
 
 // Get all products for a shop
-app.get('/shops/:shopId/products', authenticateToken, async (req, res) => {
+app.get('/shops/:shopId/products', async (req, res) => {
   const shopId = req.params.shopId;
   const query = `SELECT * FROM prd WHERE shop_id = ?`;
   try {
