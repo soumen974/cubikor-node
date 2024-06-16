@@ -844,6 +844,102 @@ app.delete('/images/:id', async (req, res) => {
   }
 });
 
+//----------- seller to buyer order --------------------------------//
+
+// Place Order Endpoint
+app.post('/api/orders', async (req, res) => {
+  const { customer_id, seller_id, product_id, quantity } = req.body;
+  try {
+      const connection = await getConnection();
+      const orderDate = new Date();
+      const status = 'Order Placed';
+
+      // Insert into CustomerOrders
+      await connection.execute(
+          'INSERT INTO CustomerOrders (customer_id, product_id, seller_id, quantity, order_date, status) VALUES (?, ?, ?, ?, ?, ?)', 
+          [customer_id, product_id, seller_id, quantity, orderDate, status]
+      );
+
+      await connection.end();
+      res.status(201).send({ message: 'Order placed successfully' });
+  } catch (error) {
+      console.error('Failed to place order:', error);
+      res.status(500).send({ error: 'Failed to place order' });
+  }
+});
+
+// Read All Orders Endpoint
+app.get('/api/orders', async (req, res) => {
+  try {
+      const connection = await getConnection();
+      const [rows] = await connection.execute('SELECT * FROM CustomerOrders');
+      await connection.end();
+      res.status(200).send(rows);
+  } catch (error) {
+      console.error('Failed to fetch orders:', error);
+      res.status(500).send({ error: 'Failed to fetch orders' });
+  }
+});
+
+// Read Single Order Endpoint
+app.get('/api/orders/:orderId', async (req, res) => {
+  const { orderId } = req.params;
+  try {
+      const connection = await getConnection();
+      const [rows] = await connection.execute('SELECT * FROM CustomerOrders WHERE order_id = ?', [orderId]);
+      await connection.end();
+      if (rows.length === 0) {
+          res.status(404).send({ error: 'Order not found' });
+      } else {
+          res.status(200).send(rows[0]);
+      }
+  } catch (error) {
+      console.error('Failed to fetch order:', error);
+      res.status(500).send({ error: 'Failed to fetch order' });
+  }
+});
+
+// Update Order Endpoint
+app.patch('/api/orders/:orderId', async (req, res) => {
+  const { orderId } = req.params;
+  const { quantity, status } = req.body;
+  try {
+      const connection = await getConnection();
+      if (quantity) {
+          await connection.execute(
+              'UPDATE CustomerOrders SET quantity = ? WHERE order_id = ?', 
+              [quantity, orderId]
+          );
+      }
+      if (status) {
+          await connection.execute(
+              'UPDATE CustomerOrders SET status = ? WHERE order_id = ?', 
+              [status, orderId]
+          );
+      }
+      await connection.end();
+      res.status(200).send({ message: 'Order updated successfully' });
+  } catch (error) {
+      console.error('Failed to update order:', error);
+      res.status(500).send({ error: 'Failed to update order' });
+  }
+});
+
+// Delete Order Endpoint
+app.delete('/api/orders/:orderId', async (req, res) => {
+  const { orderId } = req.params;
+  try {
+      const connection = await getConnection();
+      await connection.execute('DELETE FROM CustomerOrders WHERE order_id = ?', [orderId]);
+      await connection.end();
+      res.status(200).send({ message: 'Order deleted successfully' });
+  } catch (error) {
+      console.error('Failed to delete order:', error);
+      res.status(500).send({ error: 'Failed to delete order' });
+  }
+});
+
+
 
 
 
