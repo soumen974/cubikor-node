@@ -903,6 +903,43 @@ app.post('/place-order', async (req, res) => {
   }
 });
 
+// Route to get all items from SellerOrders by sellerId
+app.get('/seller-orders/:sellerId', async (req, res) => {
+  const { sellerId } = req.params;
+
+  if (!sellerId) {
+    return res.status(400).json({ message: 'Seller ID is required' });
+  }
+
+  try {
+    const query = `SELECT * FROM SellerOrders WHERE seller_id = ?`;
+    const sellerOrders = await executeQuery(query, [sellerId]);
+
+    res.status(200).json({ orders: sellerOrders });
+  } catch (error) {
+    console.error('Error fetching seller orders:', error);
+    res.status(500).json({ message: 'Internal server error', error: error.message });
+  }
+});
+
+// Route to get all items from CustomerOrders by customerId
+app.get('/customer-orders/:customerId', async (req, res) => {
+  const { customerId } = req.params;
+
+  if (!customerId) {
+    return res.status(400).json({ message: 'Customer ID is required' });
+  }
+
+  try {
+    const query = `SELECT * FROM CustomerOrders WHERE customer_id = ?`;
+    const customerOrders = await executeQuery(query, [customerId]);
+
+    res.status(200).json({ orders: customerOrders });
+  } catch (error) {
+    console.error('Error fetching customer orders:', error);
+    res.status(500).json({ message: 'Internal server error', error: error.message });
+  }
+});
 
 
 
