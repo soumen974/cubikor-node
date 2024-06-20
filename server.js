@@ -863,11 +863,16 @@ app.delete('/images/:id', async (req, res) => {
 // Place a new order
 // Order placing endpoint
 app.post('/place-order', async (req, res) => {
-  const { customerId, productId, sellerId, quantity, userAddress } = req.body;
+  const {
+    customerId, productId, sellerId, quantity, userAddress,
+    productName, productImageSrc, productPrice, userName, userMobileNumber
+  } = req.body;
 
   console.log('Received order data:', req.body); // Log the received data
 
-  if (!customerId || !productId || !sellerId || !quantity || !userAddress) {
+  // Input validation
+  if (!customerId || !productId || !sellerId || !quantity || !userAddress ||
+      !productName || !productImageSrc || !productPrice || !userName || !userMobileNumber) {
     return res.status(400).json({ message: 'Missing required fields' });
   }
 
@@ -876,15 +881,19 @@ app.post('/place-order', async (req, res) => {
 
     // Insert into CustomerOrders
     const customerOrderResult = await executeQuery(
-      `INSERT INTO CustomerOrders (customer_id, product_id, seller_id, quantity) VALUES (?, ?, ?, ?)`,
-      [customerId, productId, sellerId, quantity]
+      `INSERT INTO CustomerOrders (customer_id, product_id, seller_id, quantity, Product_name, product_imageSrc, product_price)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [customerId, productId, sellerId, quantity, productName, productImageSrc, productPrice]
     );
 
     const orderId = customerOrderResult.insertId;
 
-    // Insert into SellerOrders with user_address
-    const sellerOrderQuery = `INSERT INTO SellerOrders (order_id, seller_id, customer_id, product_id, quantity, user_address) VALUES (?, ?, ?, ?, ?, ?)`;
-    await executeQuery(sellerOrderQuery, [orderId, sellerId, customerId, productId, quantity, userAddress]);
+    // Insert into SellerOrders with all required fields
+    const sellerOrderQuery = `INSERT INTO SellerOrders
+      (order_id, seller_id, customer_id, product_id, quantity, user_address, Product_name, product_imageSrc, product_price, user_name, user_mobileNumber, order_date, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp(), 'Order Placed')`;
+
+    await executeQuery(sellerOrderQuery, [orderId, sellerId, customerId, productId, quantity, userAddress, productName, productImageSrc, productPrice, userName, userMobileNumber]);
 
     // Remove the product from the shopping cart
     const deleteQuery = `DELETE FROM shopping_cart WHERE user_id = ? AND productId = ?`;
@@ -912,8 +921,12 @@ app.get('/seller-orders/:sellerId', async (req, res) => {
   }
 
   try {
-    const query = `SELECT * FROM SellerOrders WHERE seller_id = ?`;
+    const query = 'SELECT * FROM SellerOrders WHERE seller_id = ?';
     const sellerOrders = await executeQuery(query, [sellerId]);
+
+    if (sellerOrders.length === 0) {
+      return res.status(404).json({ message: 'No orders found for this seller' });
+    }
 
     res.status(200).json({ orders: sellerOrders });
   } catch (error) {
@@ -931,8 +944,12 @@ app.get('/customer-orders/:customerId', async (req, res) => {
   }
 
   try {
-    const query = `SELECT * FROM CustomerOrders WHERE customer_id = ?`;
+    const query = 'SELECT * FROM CustomerOrders WHERE customer_id = ?';
     const customerOrders = await executeQuery(query, [customerId]);
+
+    if (customerOrders.length === 0) {
+      return res.status(404).json({ message: 'No orders found for this customer' });
+    }
 
     res.status(200).json({ orders: customerOrders });
   } catch (error) {
@@ -940,6 +957,49 @@ app.get('/customer-orders/:customerId', async (req, res) => {
     res.status(500).json({ message: 'Internal server error', error: error.message });
   }
 });
+
+// PUT method to update the status for both CustomerOrders and SellerOrders
+app.put('/update-order-status/:orderId', async (req, res) => {
+  const orderId = req.params.orderId;
+  const { status } = req.body;
+
+  // Input validation
+  if (!status) {
+    return res.status(400).json({ message: 'Missing required fields' });
+  }
+
+  try {
+    await executeQuery('START TRANSACTION');
+
+    // Update status in CustomerOrders
+    const updateCustomerOrderQuery = `
+      UPDATE CustomerOrders
+      SET status = ?
+      WHERE order_id = ?
+    `;
+    await executeQuery(updateCustomerOrderQuery, [status, orderId]);
+
+    // Update status in SellerOrders
+    const updateSellerOrderQuery = `
+      UPDATE SellerOrders
+      SET status = ?
+      WHERE order_id = ?
+    `;
+    await executeQuery(updateSellerOrderQuery, [status, orderId]);
+
+    // Commit transaction
+    await executeQuery('COMMIT');
+
+    res.status(200).json({ message: 'Order status updated successfully' });
+  } catch (error) {
+    await executeQuery('ROLLBACK');
+    console.error('Error updating order status:', error);
+    res.status(500).json({ message: 'Error updating order status', error: error.message });
+  }
+});
+
+
+
 
 
 
