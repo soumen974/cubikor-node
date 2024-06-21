@@ -868,7 +868,6 @@ app.post('/place-order', async (req, res) => {
     productName, productImageSrc, productPrice, userName, userMobileNumber
   } = req.body;
 
-  console.log('Received order data:', req.body); // Log the received data
 
   // Input validation
   if (!customerId || !productId || !sellerId || !quantity || !userAddress ||
@@ -907,7 +906,6 @@ app.post('/place-order', async (req, res) => {
     res.status(201).json({ message: 'Order placed successfully', orderId });
   } catch (error) {
     await executeQuery('ROLLBACK');
-    console.error('Error placing order:', error);
     res.status(500).json({ message: 'Error placing order', error: error.message });
   }
 });
