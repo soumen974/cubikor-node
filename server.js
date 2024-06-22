@@ -5,15 +5,15 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const cors = require('cors');
-const app = express();
-
-const multer = require('multer');
+const multer = require('multer'); // Import multer
 const fs = require('fs');
+const path = require('path'); // Import path module
 
+const app = express();
 
 app.use(bodyParser.json());
 app.use(cors({
-  origin: 'http://localhost:3000 ',
+  origin: 'http://localhost:3000',
   optionsSuccessStatus: 200
 }));
 
@@ -32,7 +32,7 @@ async function executeQuery(query, params) {
     const rows = await conn.query(query, params);
 
     // Convert any BigInt values to string before returning
-    return JSON.parse(JSON.stringify(rows, (key, value) => 
+    return JSON.parse(JSON.stringify(rows, (key, value) =>
       typeof value === 'bigint' ? value.toString() : value
     ));
   } catch (err) {
@@ -41,6 +41,8 @@ async function executeQuery(query, params) {
     if (conn) conn.release();
   }
 }
+
+app.use('/uploads', express.static('uploads'));
 
 app.use((req, res, next) => {
   const originalJson = res.json;
@@ -53,6 +55,107 @@ app.use((req, res, next) => {
 });
 
 const SECRET_KEY = 'soumen9749807435';
+
+// Multer configuration
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, './uploads'); // Ensure this path matches your server setup
+  },
+  filename: function (req, file, cb) {
+    cb(null, Date.now() + path.extname(file.originalname));
+  }
+});
+
+
+const uploads = multer({ storage: storage });
+
+// Routes for demo user operations
+app.get('/api/users-demo', async (req, res) => {
+  try {
+    const users = await pool.query('SELECT * FROM demo_user');
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/users-demo', uploads.fields([{ name: 'image', maxCount: 1 }, { name: 'resume', maxCount: 1 }]), async (req, res) => {
+  const { name, email } = req.body;
+  const image = req.files['image'][0].path;
+  const resume = req.files['resume'][0].path;
+
+  try {
+    const result = await pool.query('INSERT INTO demo_user (name, email, image, resume) VALUES (?, ?, ?, ?)', [name, email, image, resume]);
+    res.json({ id: result.insertId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/users-demo/:id', uploads.fields([{ name: 'image', maxCount: 1 }, { name: 'resume', maxCount: 1 }]), async (req, res) => {
+  const { id } = req.params;
+  const { name, email } = req.body;
+  const image = req.files['image'] ? req.files['image'][0].path : null;
+  const resume = req.files['resume'] ? req.files['resume'][0].path : null;
+
+  try {
+    const user = await pool.query('SELECT * FROM demo_user WHERE id = ?', [id]);
+
+    if (user.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const updatedUser = {
+      name: name || user[0].name,
+      email: email || user[0].email,
+      image: image || user[0].image,
+      resume: resume || user[0].resume
+    };
+
+    if (image && user[0].image) {
+      fs.unlinkSync(user[0].image);
+    }
+    if (resume && user[0].resume) {
+      fs.unlinkSync(user[0].resume);
+    }
+
+    await pool.query('UPDATE demo_user SET name = ?, email = ?, image = ?, resume = ? WHERE id = ?', [updatedUser.name, updatedUser.email, updatedUser.image, updatedUser.resume, id]);
+    res.json(updatedUser);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/users-demo/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const user = await pool.query('SELECT * FROM demo_user WHERE id = ?', [id]);
+
+    if (user.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (user[0].image) {
+      fs.unlinkSync(user[0].image);
+    }
+    if (user[0].resume) {
+      fs.unlinkSync(user[0].resume);
+    }
+
+    await pool.query('DELETE FROM demo_user WHERE id = ?', [id]);
+    res.json({ message: 'User deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+
+
+
+// ----------------DEMO-----------------
+
 
 // User-related endpoints
 // User registration
@@ -611,43 +714,51 @@ app.delete('/shops/:shopId/categories/:id', authenticateToken, async (req, res) 
   }
 });
 
+
+
+
 // Create a new product for a shop
-app.post('/shops/:shopId/products', [
+// Create a new product for a shop
+app.post('/shops/:shopId/products', authenticateToken, uploads.single('product_image'), [
   body('name').notEmpty().withMessage('Name is required'),
   body('price').notEmpty().withMessage('Price is required'),
   body('categoryId').notEmpty().withMessage('CategoryId is required')
-], authenticateToken, async (req, res) => {
-  const shopId = req.params.shopId;
+], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
   }
 
   const { name, href, imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, categoryId } = req.body;
+  const shopId = req.params.shopId;
+  const product_image = req.file ? req.file.path : ''; // Get the uploaded file path
 
-
-  const query = `INSERT INTO prd (name, href, imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, category_id, shop_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  const query = `INSERT INTO prd (name, href, imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, category_id, shop_id, product_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  
   try {
-    // Ensure categoryId and shopId exist before insertion
+    // Check if the category exists
     const categoryCheckQuery = 'SELECT id FROM catg WHERE id = ?';
     const categoryCheck = await executeQuery(categoryCheckQuery, [categoryId]);
     if (categoryCheck.length === 0) {
       return res.status(400).json({ error: 'Invalid categoryId' });
     }
 
+    // Check if the shop exists
     const shopCheckQuery = 'SELECT id FROM shops WHERE id = ?';
     const shopCheck = await executeQuery(shopCheckQuery, [shopId]);
     if (shopCheck.length === 0) {
       return res.status(400).json({ error: 'Invalid shopId' });
     }
 
-    const result = await executeQuery(query, [name, href || '/', imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, categoryId, shopId]);
+    // Insert the new product
+    const result = await executeQuery(query, [name, href || '/', imageSrc, imageAlt, price, color, rating, reviewCount, description, details, highlights, categoryId, shopId, product_image]);
     res.status(201).json({ id: result.insertId.toString() });
   } catch (err) {
     console.error('Error creating product:', err);
     res.status(500).send(`Error creating product: ${err.message}`);
   }
 });
+
 
 // Get all products for a shop
 app.get('/shops/:shopId/products', async (req, res) => {
