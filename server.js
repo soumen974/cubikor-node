@@ -718,7 +718,6 @@ app.delete('/shops/:shopId/categories/:id', authenticateToken, async (req, res) 
 
 
 // Create a new product for a shop
-// Create a new product for a shop
 app.post('/shops/:shopId/products', authenticateToken, uploads.single('product_image'), [
   body('name').notEmpty().withMessage('Name is required'),
   body('price').notEmpty().withMessage('Price is required'),
@@ -899,6 +898,30 @@ app.get('/products/all', authenticateToken, async (req, res) => {
   }
 });
 
+
+// Search endpoint
+// GET /products - Search products by keyword and return only IDs
+app.get('/products', async (req, res) => {
+  const { q } = req.query; // q is the search query parameter
+  const searchQuery = `
+    SELECT id
+    FROM prd 
+    WHERE name LIKE ? 
+       OR description LIKE ? 
+       OR details LIKE ? 
+       OR highlights LIKE ?
+  `;
+  const queryParams = Array(4).fill(`%${q}%`);
+
+  try {
+    const rows = await executeQuery(searchQuery, queryParams);
+    // Extracting only the IDs from the rows
+    const productIds = rows.map(row => row.id);
+    res.status(200).json(productIds);
+  } catch (err) {
+    res.status(500).send(`Error searching products: ${err.message}`);
+  }
+});
 
 
 
